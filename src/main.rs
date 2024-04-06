@@ -8,23 +8,23 @@ use std::path::Path;
 use plotters::prelude::*;
 const OUT_FILE_NAME: &str = "plotters-doc-data/histogram.png";
 
-fn parse_size_to_bytes(mut size: String) -> Result<u64, ParseFloatError> {
+fn parse_size_to_bytes(mut size: String) -> Result<f64, ParseFloatError> {
     match size.pop() {
         Some('K') => {
-            let kb = size.parse::<f64>()? as u64;
-            Ok(kb * 1024)
+            let kb = size.parse::<f64>()?;
+            Ok(kb * 1024.)
         }
         Some('M') => {
-            let mb = size.parse::<f64>()? as u64;
-            Ok(mb * 1024 * 1024)
+            let mb = size.parse::<f64>()?;
+            Ok(mb * 1024. * 1024.)
         }
         Some('G') => {
-            let gb = size.parse::<f64>()? as u64;
-            Ok(gb * 1024 * 1024 * 1024)
+            let gb = size.parse::<f64>()?;
+            Ok(gb * 1024. * 1024. * 1024.)
         }
         Some(n) if n.is_ascii_digit() => {
             size.push(n);
-            Ok(size.parse::<f64>()? as u64)
+            size.parse::<f64>()
         }
         _ => unreachable!("impossible filesize"),
     }
@@ -46,7 +46,7 @@ fn size_frequency(file: File) -> Result<BTreeMap<u64, u64>, io::Error> {
         //}
         if let Ok(size) = parse_size_to_bytes(line?) {
             sizes
-                .entry(size)
+                .entry(size as u64)
                 .and_modify(|counter| *counter += 1)
                 .or_insert(1);
         }
@@ -101,23 +101,23 @@ fn main() -> Result<(), io::Error> {
 mod tests {
     use super::*;
     #[test]
-    fn size_convertion() {
+    fn parse_size() {
         let kb = String::from("1K");
-        assert_eq!(parse_size_to_bytes(kb), Ok(1024));
+        assert_eq!(parse_size_to_bytes(kb), Ok(1024.));
 
         let kb_f = String::from("4.3K");
-        assert_eq!(parse_size_to_bytes(kb_f), Ok(4 * 1024));
+        assert_eq!(parse_size_to_bytes(kb_f), Ok(4.3 * 1024.));
 
         let mb = String::from("1M");
-        assert_eq!(parse_size_to_bytes(mb), Ok(1_048_576));
+        assert_eq!(parse_size_to_bytes(mb), Ok(1_048_576.));
 
         let gb = String::from("1G");
-        assert_eq!(parse_size_to_bytes(gb), Ok(1_073_741_824));
+        assert_eq!(parse_size_to_bytes(gb), Ok(1_073_741_824.));
 
         let gb_f = String::from("1.9G");
-        assert_eq!(parse_size_to_bytes(gb_f), Ok(1_073_741_824));
+        assert_eq!(parse_size_to_bytes(gb_f), Ok(1.9 * 1_073_741_824.));
 
         let bt = String::from("123");
-        assert_eq!(parse_size_to_bytes(bt), Ok(123));
+        assert_eq!(parse_size_to_bytes(bt), Ok(123.));
     }
 }
