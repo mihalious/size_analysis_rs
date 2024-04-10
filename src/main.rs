@@ -1,76 +1,107 @@
-use std::collections::BTreeMap;
 use std::env;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
-use std::num::ParseFloatError;
 use std::path::Path;
 
 use plotters::prelude::*;
-const OUT_FILE_NAME: &str = "plotters-doc-data/histogram.png";
+const OUT_FILE_NAME: &str = "histogram.png";
 
-fn parse_size_to_bytes(mut size: String) -> Result<f64, ParseFloatError> {
-    match size.pop() {
-        Some('K') => {
-            let kb = size.parse::<f64>()?;
-            Ok(kb * 1024.)
-        }
-        Some('M') => {
-            let mb = size.parse::<f64>()?;
-            Ok(mb * 1024. * 1024.)
-        }
-        Some('G') => {
-            let gb = size.parse::<f64>()?;
-            Ok(gb * 1024. * 1024. * 1024.)
-        }
-        Some(n) if n.is_ascii_digit() => {
-            size.push(n);
-            size.parse::<f64>()
-        }
-        _ => unreachable!("impossible filesize"),
-    }
+#[derive(Debug, Clone)]
+struct Data {
+    size: f64,
+    count: f64,
 }
 
-fn size_frequency(file: File) -> Result<BTreeMap<u64, u64>, io::Error> {
-    let mut sizes = BTreeMap::new();
+fn size_frequency(file: File) -> Box<[Data]> {
+    let mut sizes = Vec::new();
 
     let reader = BufReader::new(file);
     for line in reader.lines() {
-        //match parse_size_to_bytes(line?) {
-        //    Ok(size) => {
-        //        sizes
-        //            .entry(size)
-        //            .and_modify(|counter| *counter += 1)
-        //            .or_insert(1);
-        //    }
-        //    Err(e) => println!("{:?}", e),
-        //}
-        if let Ok(size) = parse_size_to_bytes(line?) {
-            sizes
-                .entry(size as u64)
-                .and_modify(|counter| *counter += 1)
-                .or_insert(1);
+        let line = line.unwrap();
+        let mut str = line.split_whitespace();
+        let count = str.next().unwrap().parse().unwrap();
+        let size = str.next().unwrap().parse().unwrap();
+        sizes.push(Data { size, count });
+    }
+    sizes.into()
+}
+fn max_count(sizes: &Box<[Data]>) -> f64 {
+    let mut max = 0.;
+    for i in sizes.iter() {
+        if max < i.count {
+            max = i.count;
         }
     }
-    return Ok(sizes);
+    max
+}
+fn percent_in_range(data: &Box<[Data]>, min: f64, max: f64) -> f64 {
+    let mut total_amount = 0.;
+    let mut in_range_amount = 0.;
+    for i in data.iter() {
+        total_amount += i.count;
+        if min <= i.size && i.size <= max {
+            in_range_amount += i.count;
+        }
+    }
+    println!("Total amount of files: {}",total_amount);
+    println!("Files in range: {}",in_range_amount);
+    let percent = in_range_amount * 100. / total_amount;
+    println!(
+        "{}% of files are in range between {} to {} bytes",
+        percent, min, max
+    );
+    percent
 }
 
-fn draw_histogram(sizes: BTreeMap<u64, u64>) -> Result<(), Box<dyn std::error::Error>> {
-    let root_drawing_area = BitMapBackend::new(OUT_FILE_NAME, (640, 480)).into_drawing_area();
-    root_drawing_area.fill(&WHITE)?;
-    let mut chart = ChartBuilder::on(&root_drawing_area)
-        // Set the caption of the chart
-        .caption("This is our first plot", ("sans-serif", 40).into_font())
-        // Set the size of the label region
-        .x_label_area_size(20)
-        .y_label_area_size(40)
-        // Finally attach a coordinate on the drawing area and make a chart context
-        .build_cartesian_2d(0f32..10f32, 0f32..10f32)?;
+fn draw_histogram(data: &Box<[Data]>) -> Result<(), Box<dyn std::error::Error>> {
+    let backend = BitMapBackend::new(OUT_FILE_NAME, (1920, 1080)).into_drawing_area();
+    backend.fill(&WHITE)?;
 
-    //for (size, number) in sizes {
-    //    let size_f64: f64 = size.into();
-    //    let size_log = size_f64.log2();
-    //    println!("{}: {}", size_log, number);
-    //}
+    let y_axis_max = max_count(data);
+    let x_spec = 0.1f64..1_000_000 as f64;
+    let y_spec = 0.1f64..(y_axis_max + 1000.) as f64;
+    let mut ctx = ChartBuilder::on(&backend)
+        .caption(
+            "Гістограма кількості файлів залежно від їх розміру",
+            ("sans-serif", 40).into_font(),
+        )
+        .margin(15)
+        .set_all_label_area_size(30)
+        .build_cartesian_2d(
+            x_spec.log_scale().zero_point(0.),
+            y_spec.log_scale().zero_point(0.),
+        )?;
+
+    ctx.configure_mesh()
+        .y_desc("Number of files")
+        .x_desc("File size")
+        .axis_desc_style(("sans-serif", 15))
+        .draw()?;
+
+    ctx.draw_series(data.iter().map(|e| {
+        let points = [
+            (e.size as f64 - 0.45, 0.0001),
+            (e.size as f64 + 0.45, e.count as f64),
+        ];
+        let bar = Rectangle::new(points, RED.filled());
+        bar
+    }))?;
+
+    percent_in_range(&data, 0., 20_000.);
+
+    //let l = [(20_000., 0.0001), (20_000., (y_axis_max + 10_000.) as f64)];
+    //ctx.draw_series(LineSeries::new(l.iter().map(|e| *e), &BLUE))?;
+    ctx.draw_series((0..1).into_iter().map(|_| {
+        Rectangle::new(
+            [
+                (20_000. - 200., 0.0001),
+                (20_000. + 200., y_axis_max + 10_000.),
+            ],
+            BLUE.filled(),
+        )
+    }))?;
+
+    backend.present()?;
     Ok(())
 }
 
@@ -82,42 +113,38 @@ fn main() -> Result<(), io::Error> {
     let file = Path::new(&file);
     let file = File::open(file)?;
 
-    match size_frequency(file) {
-        Ok(sizes) => {
-            dbg!(&sizes);
-            dbg!(&sizes.len());
-            dbg!(&sizes.into_values().sum::<u64>());
-
-            //let _ = draw_histogram(sizes);
-        }
-        Err(error) => {
-            println!("{}", error);
-        }
-    }
+    let data = size_frequency(file);
+    let _ = draw_histogram(&data);
+    //match size_frequency(file) {
+    //    Ok(sizes) => {
+    //        //dbg!(&sizes);
+    //        dbg!(&sizes.len());
+    //        let _ = draw_histogram(sizes);
+    //    }
+    //    Err(error) => {
+    //        println!("{}", error);
+    //    }
+    //}
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn parse_size() {
-        let kb = String::from("1K");
-        assert_eq!(parse_size_to_bytes(kb), Ok(1024.));
+    fn sort_result() {
+        let file = "result.txt".to_string();
+        let file = Path::new(&file);
+        let file = File::open(file).unwrap();
 
-        let kb_f = String::from("4.3K");
-        assert_eq!(parse_size_to_bytes(kb_f), Ok(4.3 * 1024.));
+        let default = size_frequency(file);
+        let mut sorted = default.clone();
+        sorted.sort_by_key(|e| e.size);
 
-        let mb = String::from("1M");
-        assert_eq!(parse_size_to_bytes(mb), Ok(1_048_576.));
-
-        let gb = String::from("1G");
-        assert_eq!(parse_size_to_bytes(gb), Ok(1_073_741_824.));
-
-        let gb_f = String::from("1.9G");
-        assert_eq!(parse_size_to_bytes(gb_f), Ok(1.9 * 1_073_741_824.));
-
-        let bt = String::from("123");
-        assert_eq!(parse_size_to_bytes(bt), Ok(123.));
+        for (l, r) in default.iter().zip(sorted.iter()) {
+            assert_eq!(l.size, r.size);
+            assert_eq!(l.count, r.count);
+        }
     }
 }
